@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 from typing import Optional, Dict, Any
@@ -49,3 +50,18 @@ class Messenger:
             Response={},
             ErrorMessage=error_message
         ).model_dump_json(by_alias=True))
+
+    async def start(self):
+        self.redis_client = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+
+        def _atexit_flush():
+            anyio.run(self.close)
+
+        atexit.register(_atexit_flush)
+
+    async def close(self):
+        if self.redis_client is None:
+            return
+
+        await self.redis_client.connection_pool.disconnect()
+        await self.redis_client.close()
