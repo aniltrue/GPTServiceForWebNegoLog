@@ -12,7 +12,7 @@ class RequestModel(BaseModel):
     system_prompt: Optional[str] = Field(None, alias="SystemPrompt")
     user_prompt: str = Field(..., alias="UserPrompt")
 
-    model: str = Field('gpt5.5', alias="Model")
+    model: str = Field('gpt-5.5', alias="Model")
 
     @field_validator('request_id', mode='before')
     def _validate_id(cls, val) -> str:
@@ -34,16 +34,3 @@ class ResponseModel(BaseModel):
     error_message: Optional[str] = Field(None, alias="ErrorMessage")
 
     response: Dict[str, Any] = Field(..., alias="Response")
-
-    @field_validator('request_id', mode='before')
-    def _validate_id(cls, val) -> str:
-        if val is None or not isinstance(val, str):
-            raise ValueError(f"Id must be string!")
-
-        ptrn_text = rf"^{TABLE_CODE}-[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$"
-        pattern = re.compile(ptrn_text, re.IGNORECASE)
-
-        if not pattern.fullmatch(val):
-            raise ValueError(f"Invalid id ({val})!")
-
-        return val

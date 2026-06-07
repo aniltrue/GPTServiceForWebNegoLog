@@ -57,16 +57,20 @@ class AsyncLogger:
         self.worker.start()
         atexit.register(self._atexit_flush)
 
-    async def close(self) -> None:
+    def _shutdown(self) -> None:
         if not self.started or self.stopped.is_set():
             return
         self.stopped.set()
         with self.lock:
             self.queue.put(None)
+            self.logged.set()
         if self.worker:
             self.worker.join()
         self.worker = None
         self.started = False
+
+    async def close(self) -> None:
+        self._shutdown()
 
     def _run_worker(self) -> None:
         while not self.stopped.is_set():
@@ -79,20 +83,21 @@ class AsyncLogger:
                     self.queue.task_done()
                     self.logged.clear()
                     continue
-                level, msg, args, kwargs = item
-                self.logger.log(level, msg, *args, **kwargs)
-                self.queue.task_done()
-                self.logged.clear()
+                if self.queue.empty():
+                    self.logged.clear()
+            level, msg, args, kwargs = item
+            self.logger.log(level, msg, *args, **kwargs)
+            self.queue.task_done()
 
     def _atexit_flush(self):
-        asyncio.run(self.close())
+        self._shutdown()
 
     def __enter__(self):
         asyncio.run(self.start())
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        asyncio.run(self.close())
+        self._shutdown()
 
     def log(self, level: int, msg: str, *args: Any, **kwargs: Any) -> None:
         with self.lock:

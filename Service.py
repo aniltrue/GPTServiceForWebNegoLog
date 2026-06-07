@@ -4,7 +4,7 @@ import anyio
 from anyio import WouldBlock
 from dotenv import load_dotenv
 
-from AsyncLogger import AsyncLogger
+from AsyncLogger import get_logger
 from LLMProcess import LLMProcessor
 from Messenger import Messenger
 from Models import RequestModel
@@ -18,9 +18,9 @@ MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", 10))
 
 class Service:
     def __init__(self):
-        self.logger = AsyncLogger("GPTService")
+        self.logger = get_logger("GPTService")
         self.messenger = Messenger()
-        self.processor = LLMProcessor()
+        self.processor = LLMProcessor(self.logger)
 
         self.semaphore = anyio.Semaphore(MAX_CONCURRENCY)
 
@@ -43,10 +43,11 @@ class Service:
                     continue
 
                 try:
+                    request = None
                     request = await self.messenger.listen_request()
 
                     if request is None:
-                        self._sema.release()
+                        self.semaphore.release()
                         await anyio.sleep(0.01)  # backoff
                         continue
 
@@ -54,11 +55,19 @@ class Service:
                 except Exception as e:
                     await self.logger.error(f"{e}")
 
-                    await self.messenger.send_error(request.request_id, str(e))
+                    if request is not None:
+                        await self.messenger.send_error(request.request_id, str(e))
 
                     self.semaphore.release()
 
     async def process(self, request: RequestModel):
-        await self.processor.run(request)
+        try:
+            response = await self.processor.run(request)
 
-        self.semaphore.release()
+            await self.messenger.send_response(request.request_id, response)
+        except Exception as e:
+            await self.messenger.send_error(request.request_id, str(e))
+
+            await self.logger.error(f"Request ({request.request_id}): {e}")
+        finally:
+            self.semaphore.release()

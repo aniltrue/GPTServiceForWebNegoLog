@@ -1,9 +1,7 @@
-import atexit
 import json
 import os
 from typing import Optional, Dict, Any
 
-import anyio
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 
@@ -53,11 +51,6 @@ class Messenger:
 
     async def start(self):
         self.redis_client = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
-
-        def _atexit_flush():
-            anyio.run(self.close)
-
-        atexit.register(_atexit_flush)
 
     async def close(self):
         if self.redis_client is None:

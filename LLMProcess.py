@@ -53,7 +53,7 @@ class LLMProcessor:
         )
 
         await self.logger.info(
-            f"[API {status_code}] Rate limit hit (attempt {rate_limit_counter}/{self.rate_max_retries}), "
+            f"[API {status_code}] Rate limit hit (attempt {rate_limit_counter}/{RATE_MAX_RETRY}), "
             f"backing off for {delay:.2f}s")
 
         rate_limit_counter += 1
@@ -75,7 +75,7 @@ class LLMProcessor:
 
         while validation_counter <= MAX_RETRY and rate_limit_counter <= RATE_MAX_RETRY:
             try:
-                if self.model.startswith("gpt-5"):
+                if request.model.startswith("gpt-5"):
                     completion = await self.client.chat.completions.create(
                         model=request.model,
                         messages=messages,
@@ -85,7 +85,7 @@ class LLMProcessor:
                     )
                 else:
                     completion = await self.client.chat.completions.create(
-                        model=self.model,
+                        model=request.model,
                         messages=messages,
                         response_format={"type": "json_object"},
                         temperature=1.0,
@@ -105,9 +105,9 @@ class LLMProcessor:
                 if e.status_code in (429, 500, 502, 503, 504):
                     rate_limit_counter = await self._wait_limit(e.status_code, rate_limit_counter)
                 else:
-                    raise e
+                    raise
             except ValueError as e:
-                await self.logger.warning(f"Validation error! Try {validation_counter}/{self.max_try}")
+                await self.logger.warning(f"Validation error! Try {validation_counter}/{MAX_RETRY}")
 
                 messages.append({"role": "assistant", "content": str(result)})
 
@@ -123,8 +123,8 @@ class LLMProcessor:
                 )
 
                 validation_counter += 1
-            except Exception as e:
-                raise e
+            except Exception:
+                raise
 
         if rate_limit_counter > RATE_MAX_RETRY:
             raise Exception("Reaching max. retrying for Rate Limit")
