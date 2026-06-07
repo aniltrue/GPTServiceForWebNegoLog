@@ -10,7 +10,6 @@ TABLE_CODE = 'llm'
 class RequestModel(BaseModel):
     request_id: str = Field(..., alias="RequestId")
     system_prompt: Optional[str] = Field(None, alias="SystemPrompt")
-    developer_prompt: Optional[str] = Field(None, alias="DeveloperPrompt")
     user_prompt: str = Field(..., alias="UserPrompt")
 
     model: str = Field('gpt5.5', alias="Model")

@@ -1,0 +1,135 @@
+import asyncio
+import json
+import os
+import random
+from typing import Optional, Any, Dict
+
+from dotenv import load_dotenv
+
+from openai import AsyncOpenAI, RateLimitError, APIStatusError
+
+from AsyncLogger import AsyncLogger
+from Models import RequestModel
+
+load_dotenv(dotenv_path='service.env')
+load_dotenv(dotenv_path='.env')
+
+MAX_RETRY = int(os.getenv("MAX_RETRY", 10))
+RATE_MAX_RETRY = int(os.getenv("RATE_MAX_RETRY", 10))
+RATE_BACKOFF_BASE = float(os.getenv("RATE_BACKOFF_BASE", 1.0))
+RATE_BACKOFF_MAX = float(os.getenv("RATE_BACKOFF_MAX", 10.0))
+
+
+class LLMProcessor:
+    def __init__(self, logger: AsyncLogger) -> None:
+        self.logger = logger
+
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        self.prompt_tokens: int = 0
+        self.completion_tokens: int = 0
+        self.total_tokens: int = 0
+
+        self._usage_lock = asyncio.Lock()
+
+    async def _update_usage(self, usage: Optional[object]) -> None:
+        if usage is None:
+            return
+
+        prompt = getattr(usage, "prompt_tokens", 0) or 0
+        completion = getattr(usage, "completion_tokens", 0) or 0
+        total = getattr(usage, "total_tokens", 0) or 0
+
+        async with self._usage_lock:
+            self.prompt_tokens += prompt
+            self.completion_tokens += completion
+            self.total_tokens += total
+
+    async def _wait_limit(self, status_code: int, rate_limit_counter: int) -> int:
+        delay = min(
+            RATE_BACKOFF_BASE * (2 ** (rate_limit_counter)) +
+            random.uniform(0, 0.5),
+            RATE_BACKOFF_MAX,
+        )
+
+        await self.logger.info(
+            f"[API {status_code}] Rate limit hit (attempt {rate_limit_counter}/{self.rate_max_retries}), "
+            f"backing off for {delay:.2f}s")
+
+        rate_limit_counter += 1
+
+        await asyncio.sleep(delay)
+
+        return rate_limit_counter
+
+    async def run(self, request: RequestModel) -> Dict[str, Any]:
+        rate_limit_counter = 0
+        validation_counter = 0
+
+        messages = []
+
+        if request.system_prompt is not None:
+            messages.append({"role": "system", "content": request.system_prompt})
+
+        messages.append({"role": "user", "content": request.user_prompt})
+
+        while validation_counter <= MAX_RETRY and rate_limit_counter <= RATE_MAX_RETRY:
+            try:
+                if self.model.startswith("gpt-5"):
+                    completion = await self.client.chat.completions.create(
+                        model=request.model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        n=1,
+                        reasoning_effort="medium"
+                    )
+                else:
+                    completion = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        temperature=1.0,
+                        n=1,
+                        max_tokens=4096
+                    )
+
+                result = completion.choices[0].message.content
+
+                await self._update_usage(completion.usage)
+
+                return json.loads(result)
+            except RateLimitError as e:
+                rate_limit_counter = await self._wait_limit(429, rate_limit_counter)
+
+            except APIStatusError as e:
+                if e.status_code in (429, 500, 502, 503, 504):
+                    rate_limit_counter = await self._wait_limit(e.status_code, rate_limit_counter)
+                else:
+                    raise e
+            except ValueError as e:
+                await self.logger.warning(f"Validation error! Try {validation_counter}/{self.max_try}")
+
+                messages.append({"role": "assistant", "content": str(result)})
+
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous answer did not match the JSON schema. "
+                            f"\nError summary: {e}. "
+                            "\nPlease answer again, returning ONLY a valid JSON object."
+                        ),
+                    }
+                )
+
+                validation_counter += 1
+            except Exception as e:
+                raise e
+
+        if rate_limit_counter > RATE_MAX_RETRY:
+            raise Exception("Reaching max. retrying for Rate Limit")
+
+        if validation_counter > MAX_RETRY:
+            raise Exception("Reaching max. retrying for Validation")
+
+        return {}

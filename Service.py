@@ -1,11 +1,11 @@
 import os
-from typing import Dict
 
 import anyio
 from anyio import WouldBlock
 from dotenv import load_dotenv
 
 from AsyncLogger import AsyncLogger
+from LLMProcess import LLMProcessor
 from Messenger import Messenger
 from Models import RequestModel
 
@@ -20,6 +20,7 @@ class Service:
     def __init__(self):
         self.logger = AsyncLogger("GPTService")
         self.messenger = Messenger()
+        self.processor = LLMProcessor()
 
         self.semaphore = anyio.Semaphore(MAX_CONCURRENCY)
 
@@ -30,6 +31,7 @@ class Service:
 
         await self.logger.start()
         await self.messenger.start()
+
         await self.logger.info("GPT Service Started.")
 
         async with anyio.create_task_group() as tg:
@@ -49,11 +51,14 @@ class Service:
                         continue
 
                     tg.start_soon(self.process, request, name=request.request_id)
-
-                    self.semaphore.release()
                 except Exception as e:
                     await self.logger.error(f"{e}")
+
+                    await self.messenger.send_error(request.request_id, str(e))
+
                     self.semaphore.release()
 
     async def process(self, request: RequestModel):
-        ...
+        await self.processor.run(request)
+
+        self.semaphore.release()
