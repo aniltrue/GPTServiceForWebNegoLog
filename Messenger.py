@@ -50,7 +50,7 @@ class Messenger:
         ).model_dump_json(by_alias=True))
 
     async def start(self):
-        self.redis_client = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+        self.redis_client = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=1, decode_responses=True)
 
     async def close(self):
         if self.redis_client is None:
