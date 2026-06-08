@@ -1,7 +1,9 @@
+import asyncio
 import json
 import os
 from typing import Optional, Dict, Any
 
+import redis
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 
@@ -21,7 +23,10 @@ class Messenger:
         self.time_out: float = time_out
 
     async def listen_request(self) -> Optional[RequestModel]:
-        res = await self.redis_client.blpop(REQUEST_STREAM, timeout=self.time_out)
+        try:
+            res = await self.redis_client.blpop(REQUEST_STREAM, timeout=self.time_out)
+        except redis.asyncio.TimeoutError:
+            return None
 
         if res is None:
             return None
