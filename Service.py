@@ -65,6 +65,8 @@ class Service:
             response = await self.processor.run(request)
 
             await self.messenger.send_response(request.request_id, response)
+
+            await self.logger.info(f"Success: {request.request_id}")
         except Exception as e:
             await self.messenger.send_error(request.request_id, str(e))
 
