@@ -12,7 +12,11 @@ class RequestModel(BaseModel):
     system_prompt: Optional[str] = Field(None, alias="SystemPrompt")
     user_prompt: str = Field(..., alias="UserPrompt")
 
-    model: str = Field('gpt-5.5', alias="Model")
+    model: str = Field('gpt-5.4-mini', alias="Model")
+    reasoning_effort: Optional[Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh']] = \
+        Field(None, alias="ReasoningEffort", description="None -> DEFAULT_REASONING_EFFORT")
+    temperature: Optional[float] = Field(None, ge=0., le=2., alias="Temperature",
+                                         description="None -> DEFAULT_TEMPERATURE")
 
     @field_validator('request_id', mode='before')
     def _validate_id(cls, val) -> str:

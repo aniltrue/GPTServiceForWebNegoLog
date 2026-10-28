@@ -6,7 +6,7 @@ from typing import Optional, Any, Dict
 
 from dotenv import load_dotenv
 
-from openai import AsyncOpenAI, RateLimitError, APIStatusError
+from openai import AsyncOpenAI, RateLimitError, APIStatusError, BadRequestError
 
 from AsyncLogger import AsyncLogger
 from Models import RequestModel
@@ -18,6 +18,12 @@ MAX_RETRY = int(os.getenv("MAX_RETRY", 10))
 RATE_MAX_RETRY = int(os.getenv("RATE_MAX_RETRY", 10))
 RATE_BACKOFF_BASE = float(os.getenv("RATE_BACKOFF_BASE", 1.0))
 RATE_BACKOFF_MAX = float(os.getenv("RATE_BACKOFF_MAX", 10.0))
+
+DEFAULT_REASONING_EFFORT = os.getenv("DEFAULT_REASONING_EFFORT", "low")
+DEFAULT_TEMPERATURE = float(os.getenv("DEFAULT_TEMPERATURE", 0.2))
+
+# Parameters the model may reject (e.g. temperature on some reasoning models); they are dropped and retried
+OPTIONAL_PARAMS = ("temperature", "reasoning_effort")
 
 
 class LLMProcessor:
@@ -73,25 +79,20 @@ class LLMProcessor:
 
         messages.append({"role": "user", "content": request.user_prompt})
 
+        params = {
+            "reasoning_effort": request.reasoning_effort or DEFAULT_REASONING_EFFORT,
+            "temperature": request.temperature if request.temperature is not None else DEFAULT_TEMPERATURE,
+        }
+
         while validation_counter <= MAX_RETRY and rate_limit_counter <= RATE_MAX_RETRY:
             try:
-                if request.model.startswith("gpt-5"):
-                    completion = await self.client.chat.completions.create(
-                        model=request.model,
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                        n=1,
-                        reasoning_effort="medium"
-                    )
-                else:
-                    completion = await self.client.chat.completions.create(
-                        model=request.model,
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                        temperature=1.0,
-                        n=1,
-                        max_tokens=4096
-                    )
+                completion = await self.client.chat.completions.create(
+                    model=request.model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    n=1,
+                    **params
+                )
 
                 result = completion.choices[0].message.content
 
@@ -101,6 +102,13 @@ class LLMProcessor:
             except RateLimitError as e:
                 rate_limit_counter = await self._wait_limit(429, rate_limit_counter)
 
+            except BadRequestError as e:
+                if e.param in OPTIONAL_PARAMS and e.param in params:
+                    await self.logger.warning(f"{request.model} does not support `{e.param}`, retrying without it.")
+
+                    params.pop(e.param)
+                else:
+                    raise
             except APIStatusError as e:
                 if e.status_code in (429, 500, 502, 503, 504):
                     rate_limit_counter = await self._wait_limit(e.status_code, rate_limit_counter)

@@ -63,9 +63,11 @@ class GPTServiceConnector:
     async def send(
         self,
         user_prompt: str,
-        model: str = 'gpt-5.5',
+        model: str = 'gpt-5.4-mini',
         system_prompt: Optional[str] = None,
         table_code: str = 'llm',
+        reasoning_effort: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> ResponseModel:
         """Sends a request to the service and waits for the response.
 
@@ -74,6 +76,10 @@ class GPTServiceConnector:
         :param system_prompt: Optional system message; omitted if not provided.
         :param table_code: Prefix of the request id (`request_id`). Must be
             compatible with the validation on the service side.
+        :param reasoning_effort: Optional reasoning effort (`none`, `minimal`,
+            `low`, `medium`, `high`, `xhigh`); the service default if omitted.
+        :param temperature: Optional sampling temperature (0-2); the service
+            default if omitted. Dropped by the service when the model rejects it.
         :raises GPTServiceError: On timeout or when the service returns an error.
         :return: The ``ResponseModel`` returned by the service.
         """
@@ -87,6 +93,12 @@ class GPTServiceConnector:
 
         if system_prompt is not None:
             request["SystemPrompt"] = system_prompt
+
+        if reasoning_effort is not None:
+            request["ReasoningEffort"] = reasoning_effort
+
+        if temperature is not None:
+            request["Temperature"] = temperature
 
         # Push the request onto the queue the service listens on.
         await self.redis_client.rpush(self.request_stream, json.dumps(request))

@@ -63,6 +63,8 @@ The service reads configuration from `service.env` (and `.env` if present).
 | `RATE_MAX_RETRY`    | `10`                          | LLMProcessor   | Retries on rate-limit / transient API errors.       |
 | `RATE_BACKOFF_BASE` | `1.0`                         | LLMProcessor   | Base seconds for exponential back-off.              |
 | `RATE_BACKOFF_MAX`  | `10.0`                        | LLMProcessor   | Cap on back-off delay.                              |
+| `DEFAULT_REASONING_EFFORT` | `low`                  | LLMProcessor   | Reasoning effort when a request does not set one.   |
+| `DEFAULT_TEMPERATURE` | `0.2`                       | LLMProcessor   | Temperature when a request does not set one.        |
 | `OPENAI_API_KEY`    | —                             | LLMProcessor   | OpenAI API key. Put this in `.env`.                 |
 
 > The service uses Redis `db=1`. The client (`GPTConnector.py`) must point at the
@@ -105,9 +107,15 @@ anyio.run(main)
 | Parameter       | Default     | Description                                              |
 | --------------- | ----------- | -------------------------------------------------------- |
 | `user_prompt`   | (required)  | The user message.                                        |
-| `model`         | `gpt-5.5`   | Model name.                                              |
+| `model`         | `gpt-5.4-mini` | Model name.                                           |
 | `system_prompt` | `None`      | Optional system message.                                 |
 | `table_code`    | `llm`       | Prefix of the generated `request_id`; must match the service validation. |
+| `reasoning_effort` | `None`   | `none`/`minimal`/`low`/`medium`/`high`/`xhigh`; service default if omitted. |
+| `temperature`   | `None`      | 0-2; service default if omitted.                         |
+
+If the model rejects `temperature` or `reasoning_effort` (some reasoning models
+accept only the default temperature), the service logs a warning and retries the
+request without that parameter.
 
 On a service-side error or a timeout, `send()` raises `GPTServiceError`.
 
@@ -128,9 +136,11 @@ It sends one request through the connector and prints the status and response.
 ```json
 {
   "RequestId": "llm-2f1c8e7a-....",
-  "Model": "gpt-5.5",
+  "Model": "gpt-5.4-mini",
   "UserPrompt": "...",
-  "SystemPrompt": "..."
+  "SystemPrompt": "...",
+  "ReasoningEffort": "low",
+  "Temperature": 0.2
 }
 ```
 
