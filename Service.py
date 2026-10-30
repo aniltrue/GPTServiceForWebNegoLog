@@ -26,11 +26,16 @@ class Service:
 
         self.working = False
 
-    async def start_service(self):
+    async def start_service(self, clean: bool = False):
         self.working = True
 
         await self.logger.start()
         await self.messenger.start()
+
+        if clean:
+            requests, responses = await self.messenger.clean()
+
+            await self.logger.info(f"Redis cleaned: {requests} waiting requests, {responses} unread responses.")
 
         await self.logger.info("GPT Service Started.")
 

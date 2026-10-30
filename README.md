@@ -58,11 +58,14 @@ The service reads configuration from `service.env` (and `.env` if present).
 | `REDIS_PORT`        | `6379`                        | Messenger      | Redis port.                                         |
 | `REQUEST_STREAM`    | `llm:request`                 | Messenger      | Queue the service listens on.                       |
 | `RESPONSE_STREAM`   | `llm:response:{request_id}`   | Messenger      | Per-request reply queue template.                   |
-| `MAX_CONCURRENCY`   | `5`                           | Service        | Max requests processed in parallel.                 |
+| `RESPONSE_TTL`      | `3600`                        | Messenger      | Seconds an unread response stays in Redis.          |
+| `MAX_CONCURRENCY`   | `10`                          | Service        | Max requests processed in parallel.                 |
 | `MAX_RETRY`         | `5`                           | LLMProcessor   | Retries when the model returns invalid JSON.        |
 | `RATE_MAX_RETRY`    | `10`                          | LLMProcessor   | Retries on rate-limit / transient API errors.       |
 | `RATE_BACKOFF_BASE` | `1.0`                         | LLMProcessor   | Base seconds for exponential back-off.              |
 | `RATE_BACKOFF_MAX`  | `10.0`                        | LLMProcessor   | Cap on back-off delay.                              |
+| `OPENAI_TIMEOUT`    | `180`                         | LLMProcessor   | Seconds one OpenAI call may take.                   |
+| `TIMEOUT_MAX_RETRY` | `2`                           | LLMProcessor   | Retries on an OpenAI timeout / connection error.    |
 | `DEFAULT_REASONING_EFFORT` | `low`                  | LLMProcessor   | Reasoning effort when a request does not set one.   |
 | `DEFAULT_TEMPERATURE` | `0.2`                       | LLMProcessor   | Temperature when a request does not set one.        |
 | `OPENAI_API_KEY`    | —                             | LLMProcessor   | OpenAI API key. Put this in `.env`.                 |
@@ -80,6 +83,14 @@ python run.py
 The service connects to Redis, starts logging to `logs/`, and begins consuming
 the `llm:request` queue. Press `Ctrl+C` to stop; the messenger and logger are
 closed cleanly on shutdown.
+
+```bash
+python run.py --clean
+```
+
+`--clean` first deletes the waiting requests (`llm:request`) and the unread
+responses (`llm:response:*`) in Redis `db=1`. Clients still waiting on a deleted
+request get a timeout. Every call logs its duration and tokens (`Usage (...)`).
 
 ## Using the service from a client
 

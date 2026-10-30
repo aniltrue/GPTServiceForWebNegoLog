@@ -2,11 +2,12 @@ import asyncio
 import json
 import os
 import random
+import time
 from typing import Optional, Any, Dict
 
 from dotenv import load_dotenv
 
-from openai import AsyncOpenAI, RateLimitError, APIStatusError, BadRequestError
+from openai import AsyncOpenAI, RateLimitError, APIStatusError, BadRequestError, APIConnectionError
 
 from AsyncLogger import AsyncLogger
 from Models import RequestModel
@@ -19,6 +20,10 @@ RATE_MAX_RETRY = int(os.getenv("RATE_MAX_RETRY", 10))
 RATE_BACKOFF_BASE = float(os.getenv("RATE_BACKOFF_BASE", 1.0))
 RATE_BACKOFF_MAX = float(os.getenv("RATE_BACKOFF_MAX", 10.0))
 
+# Seconds one OpenAI call may take; a hung call is cut here instead of the SDK default (600 s, 2 retries)
+OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", 180))
+TIMEOUT_MAX_RETRY = int(os.getenv("TIMEOUT_MAX_RETRY", 2))
+
 DEFAULT_REASONING_EFFORT = os.getenv("DEFAULT_REASONING_EFFORT", "low")
 DEFAULT_TEMPERATURE = float(os.getenv("DEFAULT_TEMPERATURE", 0.2))
 
@@ -30,7 +35,8 @@ class LLMProcessor:
     def __init__(self, logger: AsyncLogger) -> None:
         self.logger = logger
 
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Retries are done in `run`, so that every attempt is logged and counted
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT, max_retries=0)
 
         self.prompt_tokens: int = 0
         self.completion_tokens: int = 0
@@ -38,18 +44,24 @@ class LLMProcessor:
 
         self._usage_lock = asyncio.Lock()
 
-    async def _update_usage(self, usage: Optional[object]) -> None:
+    async def _update_usage(self, request: RequestModel, usage: Optional[object], elapsed: float) -> None:
         if usage is None:
+            await self.logger.info(f"Usage ({request.request_id}, {request.model}): {elapsed:.1f}s, no usage")
             return
 
         prompt = getattr(usage, "prompt_tokens", 0) or 0
         completion = getattr(usage, "completion_tokens", 0) or 0
         total = getattr(usage, "total_tokens", 0) or 0
+        cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0
+        reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0
 
         async with self._usage_lock:
             self.prompt_tokens += prompt
             self.completion_tokens += completion
             self.total_tokens += total
+
+        await self.logger.info(f"Usage ({request.request_id}, {request.model}): {elapsed:.1f}s, "
+                               f"prompt {prompt} (cached {cached}), completion {completion} (reasoning {reasoning})")
 
     async def _wait_limit(self, status_code: int, rate_limit_counter: int) -> int:
         delay = min(
@@ -71,6 +83,7 @@ class LLMProcessor:
     async def run(self, request: RequestModel) -> Dict[str, Any]:
         rate_limit_counter = 0
         validation_counter = 0
+        timeout_counter = 0
 
         messages = []
 
@@ -86,6 +99,8 @@ class LLMProcessor:
 
         while validation_counter <= MAX_RETRY and rate_limit_counter <= RATE_MAX_RETRY:
             try:
+                started = time.monotonic()
+
                 completion = await self.client.chat.completions.create(
                     model=request.model,
                     messages=messages,
@@ -96,11 +111,24 @@ class LLMProcessor:
 
                 result = completion.choices[0].message.content
 
-                await self._update_usage(completion.usage)
+                await self._update_usage(request, completion.usage, time.monotonic() - started)
 
                 return json.loads(result)
             except RateLimitError as e:
                 rate_limit_counter = await self._wait_limit(429, rate_limit_counter)
+
+            except APIConnectionError as e:  # Also APITimeoutError
+                timeout_counter += 1
+
+                if timeout_counter > TIMEOUT_MAX_RETRY:
+                    raise Exception(f"No answer from OpenAI after {timeout_counter} attempts "
+                                    f"({OPENAI_TIMEOUT:.0f} s each): {e}")
+
+                await self.logger.warning(f"{type(e).__name__} on {request.request_id} after "
+                                          f"{time.monotonic() - started:.1f}s "
+                                          f"(attempt {timeout_counter}/{TIMEOUT_MAX_RETRY}), retrying.")
+
+                await asyncio.sleep(min(RATE_BACKOFF_BASE * (2 ** timeout_counter), RATE_BACKOFF_MAX))
 
             except BadRequestError as e:
                 if e.param in OPTIONAL_PARAMS and e.param in params:
